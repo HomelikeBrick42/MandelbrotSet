@@ -8,6 +8,7 @@ import "core:math/linalg/glsl"
 import "core:intrinsics"
 import "core:thread"
 import "core:sync"
+import "core:sys/windows"
 
 import sdl "vendor:sdl2"
 
@@ -61,7 +62,7 @@ Draw :: proc(t: ^thread.Thread) {
 			c *= scale^
 			c += offset^
 
-			MaxIterations :: 100
+			MaxIterations :: 1000
 			z := start^
 			i := 0
 			for ; i < MaxIterations; i += 1 {
@@ -118,20 +119,26 @@ main :: proc() {
 	start := glsl.dvec2{0.0, 0.0}
 	offset := glsl.dvec2{0.0, 0.0}
 
-	ThreadCount :: 8
-	start_barrier: sync.Barrier
-	sync.barrier_init(&start_barrier, ThreadCount + 1)
-	end_barrier: sync.Barrier
-	sync.barrier_init(&end_barrier, ThreadCount + 1)
+    thread_count: int = 8
+    when ODIN_OS == .Windows {
+        system_info: windows.SYSTEM_INFO
+        windows.GetSystemInfo(&system_info)
+        thread_count = int(system_info.dwNumberOfProcessors)
+    }
+    fmt.printf("Using %d threads\n", thread_count)
 
-	#assert((Width * Height) % ThreadCount == 0)
-	for i in 0 ..< ThreadCount {
+	start_barrier: sync.Barrier
+	sync.barrier_init(&start_barrier, thread_count + 1)
+	end_barrier: sync.Barrier
+	sync.barrier_init(&end_barrier, thread_count + 1)
+
+	for i in 0 ..< thread_count {
 		t := thread.create(Draw)
 		t.data = new_clone(
 			DrawData{
 				pixels = pixels,
-				start_index = i * (len(pixels) / ThreadCount),
-				end_index = (i + 1) * (len(pixels) / ThreadCount),
+				start_index = i * (len(pixels) / thread_count),
+				end_index = (i + 1) * (len(pixels) / thread_count),
 				scale = &scale,
 				start = &start,
 				offset = &offset,
@@ -177,9 +184,9 @@ main :: proc() {
 					}
 				case .MOUSEWHEEL:
 					if event.wheel.y > 0 {
-						scale /= 0.9
+						scale *= 0.8
 					} else if event.wheel.y < 0 {
-						scale *= 0.9
+						scale /= 0.8
 					}
 				}
 			}
