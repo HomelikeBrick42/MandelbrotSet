@@ -4,6 +4,7 @@ import "core:c"
 import "core:os"
 import "core:fmt"
 import "core:math"
+import "core:math/big"
 import "core:math/linalg/glsl"
 import "core:intrinsics"
 import "core:thread"
@@ -40,9 +41,11 @@ DrawData :: struct {
 	pixels:        []Pixel,
 	start_index:   int,
 	end_index:     int,
-	scale:         ^f64,
-	start:         ^glsl.dvec2,
-	offset:        ^glsl.dvec2,
+	scale:         ^big.Rat,
+	start_x:       ^big.Rat,
+	start_y:       ^big.Rat,
+	offset_x:      ^big.Rat,
+	offset_y:      ^big.Rat,
 	start_barrier: ^sync.Barrier,
 	end_barrier:   ^sync.Barrier,
 }
@@ -55,22 +58,52 @@ Draw :: proc(t: ^thread.Thread) {
 			x := pixel_index % Width
 			y := (len(pixels) - pixel_index - 1) / Width
 
-			c := glsl.dvec2{
-				(f64(x) / Width * 2.0 - 1.0) * (f64(Width) / f64(Height)),
-				f64(y) / Height * 2.0 - 1.0,
-			}
-			c *= scale^
-			c += offset^
+			cx: big.Rat
+			big.rat_set_f64(&cx, (f64(x) / Width * 2.0 - 1.0) * (f64(Width) / f64(Height)))
+			big.rat_mul_rat(&cx, &cx, scale)
+			big.rat_add_rat(&cx, &cx, offset_x)
+			cy: big.Rat
+			big.rat_set_f64(&cy, f64(y) / Height * 2.0 - 1.0)
+			big.rat_mul_rat(&cy, &cy, scale)
+			big.rat_add_rat(&cy, &cy, offset_y)
 
 			MaxIterations :: 1000
-			z := start^
+			zx: big.Rat
+			big.rat_copy(&zx, start_x)
+			zy: big.Rat
+			big.rat_copy(&zy, start_y)
+
 			i := 0
 			for ; i < MaxIterations; i += 1 {
-				z = glsl.dvec2{z.x * z.x - z.y * z.y, z.x * z.y + z.x * z.y} + c
-				if glsl.dot(z, z) >= 4.0 {
+				temp: big.Rat
+				temp2: big.Rat
+
+				newZX: big.Rat
+				big.rat_mul_rat(&newZX, &zx, &zx)
+				big.rat_mul_rat(&temp, &zy, &zy)
+				big.rat_sub_rat(&newZX, &newZX, &temp)
+				big.rat_add_rat(&newZX, &newZX, &cx)
+
+				newZY: big.Rat
+				big.rat_mul_rat(&newZY, &zx, &zy)
+				big.rat_mul_rat(&temp, &zx, &zy)
+				big.rat_add_rat(&newZY, &newZY, &temp)
+				big.rat_add_rat(&newZY, &newZY, &cy)
+
+				defer big.internal_destroy(&temp, &temp2, &newZX, &newZY)
+
+				big.rat_mul_rat(&temp, &newZX, &newZX)
+				big.rat_mul_rat(&temp2, &newZY, &newZY)
+				big.rat_add_rat(&temp, &temp, &temp2)
+
+				big.rat_set_f64(&temp2, 4.0)
+
+				if comp, _ := big.rat_compare(&temp, &temp2); comp != -1 {
 					break
 				}
 			}
+
+			big.internal_destroy(&cx, &cy, &zx, &zy)
 
 			if i == MaxIterations {
 				pixels[pixel_index] = ToPixel({})
@@ -115,17 +148,26 @@ main :: proc() {
 	pixels := make([]Pixel, Width * Height)
 	defer delete(pixels)
 
-	scale := 1.5
-	start := glsl.dvec2{0.0, 0.0}
-	offset := glsl.dvec2{0.0, 0.0}
+	scale: big.Rat
+	big.rat_set_f64(&scale, 0.5)
 
-    thread_count: int = 8
-    when ODIN_OS == .Windows {
-        system_info: windows.SYSTEM_INFO
-        windows.GetSystemInfo(&system_info)
-        thread_count = int(system_info.dwNumberOfProcessors)
-    }
-    fmt.printf("Using %d threads\n", thread_count)
+	start_x: big.Rat
+	big.rat_set_f64(&start_x, 0.0)
+	start_y: big.Rat
+	big.rat_set_f64(&start_y, 0.0)
+
+	offset_x: big.Rat
+	big.rat_set_f64(&offset_x, 0.0)
+	offset_y: big.Rat
+	big.rat_set_f64(&offset_y, 0.0)
+
+	thread_count: int = 8
+	when ODIN_OS == .Windows {
+		system_info: windows.SYSTEM_INFO
+		windows.GetSystemInfo(&system_info)
+		thread_count = int(system_info.dwNumberOfProcessors)
+	}
+	fmt.printf("Using %d threads\n", thread_count)
 
 	start_barrier: sync.Barrier
 	sync.barrier_init(&start_barrier, thread_count + 1)
@@ -140,8 +182,10 @@ main :: proc() {
 				start_index = i * (len(pixels) / thread_count),
 				end_index = (i + 1) * (len(pixels) / thread_count),
 				scale = &scale,
-				start = &start,
-				offset = &offset,
+				start_x = &start_y,
+				start_y = &start_x,
+				offset_x = &offset_x,
+				offset_y = &offset_y,
 				start_barrier = &start_barrier,
 				end_barrier = &end_barrier,
 			},
@@ -184,9 +228,15 @@ main :: proc() {
 					}
 				case .MOUSEWHEEL:
 					if event.wheel.y > 0 {
-						scale *= 0.8
+						temp: big.Rat
+						big.rat_set_f64(&temp, 0.8)
+						big.rat_mul_rat(&scale, &scale, &temp)
+						big.internal_destroy(&temp)
 					} else if event.wheel.y < 0 {
-						scale /= 0.8
+						temp: big.Rat
+						big.rat_set_f64(&temp, 0.8)
+						big.rat_div_rat(&scale, &scale, &temp)
+						big.internal_destroy(&temp)
 					}
 				}
 			}
@@ -196,17 +246,35 @@ main :: proc() {
 		dt := f64(time - last_time) / f64(time_frequency)
 		last_time = time
 
+		fmt.println("FPS:", 1.0 / dt)
+
 		if move_state[.Up] {
-			offset.y += scale * dt
+			temp: big.Rat
+			big.rat_set_f64(&temp, dt)
+			big.rat_mul_rat(&temp, &scale, &temp)
+			big.rat_add_rat(&offset_y, &offset_y, &temp)
+			big.internal_destroy(&temp)
 		}
 		if move_state[.Down] {
-			offset.y -= scale * dt
+			temp: big.Rat
+			big.rat_set_f64(&temp, dt)
+			big.rat_mul_rat(&temp, &scale, &temp)
+			big.rat_sub_rat(&offset_y, &offset_y, &temp)
+			big.internal_destroy(&temp)
 		}
 		if move_state[.Left] {
-			offset.x -= scale * dt
+			temp: big.Rat
+			big.rat_set_f64(&temp, dt)
+			big.rat_mul_rat(&temp, &scale, &temp)
+			big.rat_sub_rat(&offset_x, &offset_x, &temp)
+			big.internal_destroy(&temp)
 		}
 		if move_state[.Right] {
-			offset.x += scale * dt
+			temp: big.Rat
+			big.rat_set_f64(&temp, dt)
+			big.rat_mul_rat(&temp, &scale, &temp)
+			big.rat_add_rat(&offset_x, &offset_x, &temp)
+			big.internal_destroy(&temp)
 		}
 
 		sync.barrier_wait(&start_barrier)
