@@ -34,6 +34,10 @@ MoveKeys :: enum {
 	Down,
 	Left,
 	Right,
+	StartUp,
+	StartDown,
+	StartLeft,
+	StartRight,
 }
 
 DrawData :: struct {
@@ -119,13 +123,13 @@ main :: proc() {
 	start := glsl.dvec2{0.0, 0.0}
 	offset := glsl.dvec2{0.0, 0.0}
 
-    thread_count: int = 8
-    when ODIN_OS == .Windows {
-        system_info: windows.SYSTEM_INFO
-        windows.GetSystemInfo(&system_info)
-        thread_count = int(system_info.dwNumberOfProcessors)
-    }
-    fmt.printf("Using %d threads\n", thread_count)
+	thread_count: int = 8
+	when ODIN_OS == .Windows {
+		system_info: windows.SYSTEM_INFO
+		windows.GetSystemInfo(&system_info)
+		thread_count = int(system_info.dwNumberOfProcessors)
+	}
+	fmt.printf("Using %d threads\n", thread_count)
 
 	start_barrier: sync.Barrier
 	sync.barrier_init(&start_barrier, thread_count + 1)
@@ -170,6 +174,14 @@ main :: proc() {
 						move_state[.Left] = true
 					case sdl.Keycode.D:
 						move_state[.Right] = true
+					case sdl.Keycode.T:
+						move_state[.StartUp] = true
+					case sdl.Keycode.G:
+						move_state[.StartDown] = true
+					case sdl.Keycode.F:
+						move_state[.StartLeft] = true
+					case sdl.Keycode.H:
+						move_state[.StartRight] = true
 					}
 				case .KEYUP:
 					#partial switch event.key.keysym.sym {
@@ -181,6 +193,14 @@ main :: proc() {
 						move_state[.Left] = false
 					case sdl.Keycode.D:
 						move_state[.Right] = false
+					case sdl.Keycode.T:
+						move_state[.StartUp] = false
+					case sdl.Keycode.G:
+						move_state[.StartDown] = false
+					case sdl.Keycode.F:
+						move_state[.StartLeft] = false
+					case sdl.Keycode.H:
+						move_state[.StartRight] = false
 					}
 				case .MOUSEWHEEL:
 					if event.wheel.y > 0 {
@@ -196,6 +216,8 @@ main :: proc() {
 		dt := f64(time - last_time) / f64(time_frequency)
 		last_time = time
 
+		fmt.printf("\rFPS: %f", 1.0 / dt)
+
 		if move_state[.Up] {
 			offset.y += scale * dt
 		}
@@ -207,6 +229,19 @@ main :: proc() {
 		}
 		if move_state[.Right] {
 			offset.x += scale * dt
+		}
+
+		if move_state[.StartUp] {
+			start.y += 0.2 * dt
+		}
+		if move_state[.StartDown] {
+			start.y -= 0.2 * dt
+		}
+		if move_state[.StartLeft] {
+			start.x -= 0.2 * dt
+		}
+		if move_state[.StartRight] {
+			start.x += 0.2 * dt
 		}
 
 		sync.barrier_wait(&start_barrier)
